@@ -1,0 +1,33 @@
+{
+  "name": "co-producer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ableton Live co-producer companion app and Max for Live bridge.",
+  "type": "module",
+  "main": "dist/main/index.js",
+  "packageManager": "npm@11.6.2",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test packages/core/src/**/*.test.ts"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^30.5.1",
+    "electron-vite": "^2.3.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}
