@@ -1,24 +1,29 @@
 import type {
   ActionPlan,
+  AiConnectionTestResult,
+  AiSettings,
   AnalysisRequest,
   ApplyPlanRequest,
   ApplyPlanResult,
+  ChatTurn,
   ContextSnapshot,
   ConversationResponse,
   CoproducerState,
   ReferenceAnalysis
 } from '@shared/types';
-import { createConversationResponse } from './planner';
+import { createModelBackedConversationResponse, testAiConnection } from './model-orchestrator';
 import { validateApplyPlanRequest } from './plan-guards';
 import { createId } from './utils';
 
 export class CoproducerService {
-  createReply(
+  async createReply(
     message: string,
     snapshot: ContextSnapshot,
-    references: ReferenceAnalysis[]
-  ): ConversationResponse {
-    return createConversationResponse({ message, snapshot, references });
+    references: ReferenceAnalysis[],
+    settings: AiSettings,
+    chatHistory: ChatTurn[] = []
+  ): Promise<ConversationResponse> {
+    return createModelBackedConversationResponse({ message, snapshot, references, chatHistory }, settings);
   }
 
   createSelectionAnalysisRequest(target: AnalysisRequest['target'], prompt?: string): AnalysisRequest {
@@ -34,5 +39,9 @@ export class CoproducerService {
     plan?: ActionPlan;
   } {
     return validateApplyPlanRequest(request, state.snapshot.setRevision, state.pendingPlans);
+  }
+
+  async testConnection(settings: AiSettings): Promise<AiConnectionTestResult> {
+    return testAiConnection(settings);
   }
 }

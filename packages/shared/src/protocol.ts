@@ -3,6 +3,7 @@ import type {
   AnalysisRequest,
   AnalysisTarget,
   ApplyPlanResult,
+  AbletonCommand,
   AudioFeatureSummary,
   ContextSnapshot
 } from './types';
@@ -32,10 +33,31 @@ export interface BridgeCommandResultMessage {
   result: ApplyPlanResult;
 }
 
+export interface BridgeCommandStartedMessage {
+  type: 'command:started';
+  planId: string;
+  source: 'apply' | 'self_test';
+  commandCount: number;
+  message: string;
+}
+
+export interface BridgeCommandStepResultMessage {
+  type: 'command:step_result';
+  planId: string;
+  commandIndex: number;
+  commandType: AbletonCommand['type'];
+  ok: boolean;
+  message: string;
+  command?: AbletonCommand;
+}
+
 export interface BridgeErrorMessage {
   type: 'bridge:error';
   message: string;
   code?: string;
+  planId?: string;
+  commandIndex?: number;
+  commandType?: AbletonCommand['type'];
   data?: unknown;
 }
 
@@ -43,6 +65,8 @@ export type BridgeInboundMessage =
   | BridgeHelloMessage
   | BridgeSnapshotUpdateMessage
   | BridgeAnalysisResultMessage
+  | BridgeCommandStartedMessage
+  | BridgeCommandStepResultMessage
   | BridgeCommandResultMessage
   | BridgeErrorMessage;
 
@@ -60,7 +84,13 @@ export interface CommandBatchMessage {
   plan: ActionPlan;
 }
 
+export interface SelfTestRequestMessage {
+  type: 'self_test:request';
+  planId: string;
+}
+
 export type BridgeOutboundMessage =
   | SnapshotRequestMessage
   | AnalysisRequestMessage
-  | CommandBatchMessage;
+  | CommandBatchMessage
+  | SelfTestRequestMessage;

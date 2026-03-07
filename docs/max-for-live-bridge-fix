@@ -1,0 +1,348 @@
+# Co-Producer Infrastructure Recovery Plan
+
+## Decision
+
+Do not keep iterating on the current architecture as the primary production path.
+
+Keep Max for Live only where it is strong:
+- in-set UI
+- audio tapping / metering
+- lightweight Live observation when needed
+
+Move the authoritative write bridge out of Max for Live and into a dedicated Ableton control-surface / remote-script integration.
+
+Reason:
+- repeated failures are happening on the first write primitive: `create_midi_track`
+- that means the current bridge is not failing at product logic, it is failing at the platform boundary
+- if the first primitive is unreliable, every higher-level promise built on top of it is unreliable too
+
+## Findings
+
+### 1. The current write path is not trustworthy
+
+Current production write flow:
+- planner generates an `ActionPlan`
+- desktop app sends it over localhost WebSocket
+- `node.script` forwards into `js live-observer.js`
+- `live-observer.js` mutates Live through the Live API
+
+This is the wrong place to carry production reliability.
+
+Observed evidence in this repo and current testing:
+- the bridge can connect and exchange snapshots
+- the self-test fails on `create_midi_track`
+- repeated retries, deferred tasks, patch-level message scheduling, and post-step verification did not make the first write primitive reliable
+
+Impact:
+- every feature above this layer is blocked
+- any “production-ready coproducer” claim is false until the write surface itself is proven
+
+### 2. The system mixes a demo planner with a DAW automation claim
+
+Current planner behavior in [planner.ts](/Users/aleksander/Documents/Development/co-producer/packages/core/src/planner.ts) is still a heuristic generator with a narrow command set.
+
+It can:
+- infer role
+- pick a native instrument/effect chain
+- generate MIDI notes heuristically
+
+It cannot yet:
+- reason over real audio from the Live set in a trustworthy way
+- inspect plugin-specific state in a robust way
+- adapt decisions from a verified mutation result
+- operate as a closed-loop agent that listens, changes, re-measures, and improves
+
+Impact:
+- the current system is closer to a guided native-device macro planner than a true co-producer
+
+### 3. The audio intelligence path is still placeholder-level
+
+Current bridge-side analysis in [live-observer.js](/Users/aleksander/Documents/Development/co-producer/bridges/max-for-live/live-observer.js) is a density-derived placeholder, not actual signal analysis.
+
+That means the app does not yet truly:
+- listen to the track
+- compare actual spectral/dynamic balance
+- drive mixing/mastering decisions from the real signal path
+
+Impact:
+- “mixing”, “mastering”, and “listen and improve” are not credible product claims yet
+
+### 4. The safety model depends on snapshot truth, but the current snapshot source is not authoritative enough
+
+The architecture assumes:
+- plan generated from snapshot revision
+- write command applied to the live set
+- fresh snapshot proves the mutation occurred
+
+That only works if the write path and snapshot source are both authoritative.
+
+Right now:
+- mock mode and real mode share too much product surface
+- snapshot truth depends on a Max bridge that is itself not yet a proven write authority
+
+Impact:
+- revision safety exists on paper, but not yet on a reliable control substrate
+
+### 5. The product scope is wider than the actual platform support
+
+Current user expectation:
+- create tracks, clips, devices, notes
+- mix
+- master
+- “perform any action on demand”
+- eventually support arbitrary production tasks
+
+Current platform support:
+- Live Object Model / Max for Live can access a bounded set of Live objects
+- native-device insertion and clip/track manipulation are feasible when the bridge is reliable
+- arbitrary third-party plugin control, deep session introspection, and true audio-driven autonomous production are separate problems
+
+Impact:
+- the app needs an explicit capability matrix instead of a broad “can do anything in Ableton” promise
+
+## Target Architecture
+
+### A. Split read, write, and audio into separate runtime responsibilities
+
+#### 1. Desktop orchestrator
+
+Keep Electron as the control plane:
+- chat UX
+- orchestration
+- plan generation
+- policy / safety checks
+- execution review
+- trace logging
+- durable session state
+
+#### 2. Primary write bridge: custom Ableton control surface / remote script
+
+Inference from official Ableton support surfaces:
+- Ableton supports installed control-surface / remote-script integrations
+- Live 11+ moved remote scripts to Python 3
+- this is the correct place for authoritative session mutation, not a Max device pretending to be a transaction engine
+
+Production role:
+- create / rename / color / arm / delete tracks
+- create / duplicate / delete clips
+- write MIDI
+- insert native devices
+- set native parameters
+- read selected track / selected clip / devices / session view state
+- publish authoritative execution results back to the desktop app
+
+Requirement:
+- every supported command must be implemented in the remote script first
+- no UI promise ships before the remote-script command passes manual QA on the supported Live versions
+
+#### 3. Secondary Live companion: Max for Live
+
+Use Max for Live only where it adds leverage:
+- in-session UX
+- audio observation
+- metering taps
+- transport-linked helpers
+- optional visual / debugging device
+
+Do not use it as the primary write authority.
+
+#### 4. Dedicated audio analysis path
+
+Add a real signal-analysis pipeline:
+- selected track tap
+- master tap
+- exported reference ingestion
+- loudness / crest / spectral balance / stereo width / transient / note-density analysis
+
+Possible packaging options:
+- Max for Live audio device for taps
+- desktop-side analysis workers
+- explicit buffer/render handoff instead of fake placeholder features
+
+### B. Introduce a strict capability matrix
+
+The app should explicitly support only these v1 write actions:
+- create MIDI track
+- create audio track
+- create return track if the platform surface supports it reliably
+- rename / color / arm tracks
+- create MIDI clip
+- replace MIDI notes
+- insert supported native instruments
+- insert supported native audio effects
+- set supported native parameters
+
+Not v1:
+- arbitrary VST/plugin control
+- arbitrary mix/master actions with no explicit command support
+- destructive editing without confirmation
+- “any action on demand”
+
+### C. Make execution closed-loop
+
+Every execution request should be:
+1. planned
+2. capability-checked
+3. executed by the authoritative write bridge
+4. re-read from Live
+5. validated against expected mutation
+6. surfaced with structured trace
+
+If verification fails:
+- mark the batch failed
+- capture exact bridge logs
+- suggest next diagnostic step
+
+### D. Add a real production-state model
+
+The state model should separately track:
+- transport
+- arrangement state
+- selected track / clip / device
+- device chains
+- gain staging summary
+- spectral / loudness summary
+- reference-file comparisons
+- execution traces
+- last known verified command result
+
+Mock mode should become a clearly separate sandbox, not a silent fallback with near-identical UX.
+
+## Proposed Migration Plan
+
+### Phase 0: Stop widening scope on the current Max-write architecture
+
+Do not add more command types to the current Max write bridge.
+
+Only keep enough code to:
+- preserve current research
+- keep the UI usable
+- support a temporary snapshot / audio helper path
+
+### Phase 1: Build the authoritative write bridge
+
+Deliverables:
+- custom control-surface / remote-script package
+- local IPC channel between Live integration and desktop app
+- supported command suite with deterministic IDs and structured results
+- hardcoded self-test matrix
+
+Acceptance:
+- `create_midi_track`
+- `create_audio_track`
+- `create_midi_clip`
+- `replace_clip_notes`
+- `insert_native_device`
+- `set_device_parameter`
+- `name_track`
+- `set_track_color`
+- `arm_track`
+
+All must pass manual QA on supported environments before expanding scope.
+
+### Phase 2: Make context authoritative
+
+Deliverables:
+- selected track sync
+- selected clip sync
+- device-chain sync
+- session snapshot from the authoritative bridge
+- clear capability flags per command
+
+Acceptance:
+- selecting a track in Live updates the app within 1 second
+- creating a track or clip is reflected back in the next verified snapshot
+
+### Phase 3: Add real audio listening
+
+Deliverables:
+- selected-track audio tap
+- master tap
+- desktop-side signal analysis workers
+- reference matching and delta suggestions
+
+Acceptance:
+- app can explain concrete mix imbalances from the actual signal
+- app can compare current master against imported references with real feature deltas
+
+### Phase 4: Upgrade planning into a proper coproducer loop
+
+Deliverables:
+- retrieval over project context
+- structured planning modes
+- self-critique / revise loop
+- multi-turn task memory
+- mix / arrangement / sound-design specialists
+
+Acceptance:
+- user can ask for track building, arranging, mix critique, and revision suggestions grounded in the current set
+
+## Immediate Repo Changes Recommended
+
+### 1. Reframe the product docs
+
+Update public docs to say:
+- current app is an experimental Ableton copilot
+- authoritative Live write control is under rebuild
+- Max for Live write execution is not production-ready
+
+### 2. Add a new architecture document for the remote-script pivot
+
+Create:
+- `docs/control-surface-architecture.md`
+
+Include:
+- process model
+- command transport
+- verified capability matrix
+- supported Live versions
+- QA matrix
+
+### 3. Freeze Max write-surface expansion
+
+Do not add:
+- more write commands
+- more “AI autonomy” claims
+- broader plugin promises
+
+Until the authoritative bridge exists.
+
+### 4. Build a hardware-in-the-loop QA workflow
+
+Required:
+- scripted desktop-side integration tests
+- manual Live QA checklist
+- versioned test matrix:
+  - macOS version
+  - Ableton Live version
+  - Max version
+  - device package version
+
+## What “Production Ready” Actually Means Here
+
+For this app, production ready should mean:
+- deterministic bridge connection
+- deterministic track/clip/device mutations
+- authoritative state sync back from Live
+- explicit unsupported actions
+- real audio analysis instead of placeholders
+- no false success states
+- manual QA across supported environments
+
+Until then, the app should not describe itself as able to “perform any action on demand”.
+
+## Source Notes
+
+Primary references used for this recovery direction:
+- Ableton Live control-surface / remote-script installation and Python 3 migration docs:
+  - https://help.ableton.com/hc/en-us/articles/209774285-Using-Control-Surfaces
+  - https://help.ableton.com/hc/en-us/articles/4416523029138-Using-MIDI-Remote-Scripts
+- Cycling '74 Live API / LOM references:
+  - https://docs.cycling74.com/userguide/m4l/live_api_overview/
+  - https://docs.cycling74.com/apiref/lom/song/
+  - https://docs.cycling74.com/apiref/lom/track/
+  - https://docs.cycling74.com/apiref/lom/clipslot/
+  - https://docs.cycling74.com/apiref/lom/clip/
+
+Inference:
+- the recommendation to move the authoritative write path to a control-surface / remote-script layer is an engineering conclusion from the repeated failure of the current Max-for-Live mutation path plus Ableton's supported scripted-control surface. It is not a direct quote from Ableton.

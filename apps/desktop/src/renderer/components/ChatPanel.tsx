@@ -7,6 +7,7 @@ interface ChatPanelProps {
   onMessageChange: (value: string) => void;
   onSend: () => Promise<void>;
   onRequestAnalysis: (target: 'selection' | 'master') => Promise<void>;
+  onUsePrompt: (value: string) => void;
 }
 
 export function ChatPanel({
@@ -15,7 +16,8 @@ export function ChatPanel({
   isBusy,
   onMessageChange,
   onSend,
-  onRequestAnalysis
+  onRequestAnalysis,
+  onUsePrompt
 }: ChatPanelProps): JSX.Element {
   return (
     <section className="panel panel-chat">
@@ -45,7 +47,31 @@ export function ChatPanel({
       <div className="chat-stream">
         {state.chat.length === 0 ? (
           <div className="empty-state">
-            <p>Ask for arrangement feedback, a new musical idea, or a native Ableton effect chain.</p>
+            <p>
+              {state.settings.provider === 'heuristic'
+                ? 'You are in heuristic mode, so keep prompts concrete. Best first test: ask for a specific track, clip length, and effect chain.'
+                : 'Ask for arrangement feedback, a new musical idea, or a native Ableton effect chain.'}
+            </p>
+            <div className="chip-row">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() =>
+                  onUsePrompt('Add an 8 bar bass idea with saturation and a short reverb tail.')
+                }
+              >
+                Try a bass prompt
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() =>
+                  onUsePrompt('Compare this set to my reference and tell me what is missing before the drop.')
+                }
+              >
+                Try a reference prompt
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -80,7 +106,10 @@ export function ChatPanel({
           <p>
             {state.bridgeStatus === 'connected'
               ? 'Ableton bridge connected.'
-              : 'Mock mode is active until the Max for Live bridge connects.'}
+              : 'Mock mode is active until the Max for Live bridge connects.'}{' '}
+            {state.settings.provider === 'heuristic'
+              ? 'AI is also in heuristic fallback mode.'
+              : `AI provider: ${state.settings.provider}.`}
           </p>
           <button className="primary-button" disabled={isBusy || message.trim().length === 0} type="submit">
             {isBusy ? 'Thinking...' : 'Create Response'}

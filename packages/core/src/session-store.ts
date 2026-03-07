@@ -4,8 +4,12 @@ import type {
   ChatTurn,
   ContextSnapshot,
   CoproducerState,
-  ReferenceAnalysis
+  ExecutionTrace,
+  ExecutionTraceEntry,
+  ReferenceAnalysis,
+  AiSettings
 } from '@shared/types';
+import { defaultAiSettings } from '@shared/settings';
 
 export class SessionStore {
   private state: CoproducerState;
@@ -16,17 +20,23 @@ export class SessionStore {
       snapshot: initialSnapshot,
       chat: [],
       pendingPlans: [],
-      references: []
+      references: [],
+      settings: defaultAiSettings
     };
   }
 
   getState(): CoproducerState {
     return {
       ...this.state,
+      settings: { ...this.state.settings },
       snapshot: structuredClone(this.state.snapshot),
       chat: [...this.state.chat],
       pendingPlans: [...this.state.pendingPlans],
-      references: [...this.state.references]
+      references: [...this.state.references],
+      activeExecution: this.state.activeExecution
+        ? structuredClone(this.state.activeExecution)
+        : undefined,
+      lastExecution: this.state.lastExecution ? structuredClone(this.state.lastExecution) : undefined
     };
   }
 
@@ -34,7 +44,7 @@ export class SessionStore {
     this.state = {
       ...this.state,
       bridgeStatus: status,
-      bridgeVersion
+      bridgeVersion: bridgeVersion ?? this.state.bridgeVersion
     };
 
     return this.getState();
@@ -85,10 +95,74 @@ export class SessionStore {
     return this.getState();
   }
 
+  updateSettings(settings: AiSettings): CoproducerState {
+    this.state = {
+      ...this.state,
+      settings
+    };
+
+    return this.getState();
+  }
+
   setError(message?: string): CoproducerState {
     this.state = {
       ...this.state,
       lastError: message
+    };
+
+    return this.getState();
+  }
+
+  startExecution(trace: ExecutionTrace): CoproducerState {
+    this.state = {
+      ...this.state,
+      activeExecution: trace,
+      lastExecution: trace
+    };
+
+    return this.getState();
+  }
+
+  appendExecutionEntry(entry: ExecutionTraceEntry): CoproducerState {
+    if (!this.state.activeExecution || this.state.activeExecution.planId !== entry.planId) {
+      return this.getState();
+    }
+
+    this.state = {
+      ...this.state,
+      activeExecution: {
+        ...this.state.activeExecution,
+        entries: [...this.state.activeExecution.entries, entry]
+      },
+      lastExecution: {
+        ...this.state.activeExecution,
+        entries: [...this.state.activeExecution.entries, entry]
+      }
+    };
+
+    return this.getState();
+  }
+
+  finishExecution(
+    planId: string,
+    patch: Partial<Omit<ExecutionTrace, 'planId' | 'entries'>> & {
+      entries?: ExecutionTraceEntry[];
+    }
+  ): CoproducerState {
+    if (!this.state.activeExecution || this.state.activeExecution.planId !== planId) {
+      return this.getState();
+    }
+
+    const nextTrace: ExecutionTrace = {
+      ...this.state.activeExecution,
+      ...patch,
+      entries: patch.entries ?? this.state.activeExecution.entries
+    };
+
+    this.state = {
+      ...this.state,
+      activeExecution: undefined,
+      lastExecution: nextTrace
     };
 
     return this.getState();

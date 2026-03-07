@@ -11,7 +11,8 @@ export type MusicalRole =
 export type TrackType = 'midi' | 'audio' | 'return' | 'master';
 export type DeviceType = 'instrument' | 'audio_effect' | 'midi_effect' | 'unknown';
 export type AnalysisTarget = 'selection' | 'track' | 'master' | 'reference_file';
-export type BridgeStatus = 'disconnected' | 'connected' | 'mock';
+export type BridgeStatus = 'waiting' | 'syncing' | 'connected' | 'executing' | 'error' | 'mock';
+export type AiProvider = 'heuristic' | 'ollama' | 'openai_compatible';
 
 export interface MidiNote {
   pitch: number;
@@ -180,6 +181,7 @@ export interface InsertNativeDeviceCommand {
 export interface SetDeviceParameterCommand {
   type: 'set_device_parameter';
   trackId?: string;
+  trackIndex?: number;
   deviceId?: string;
   parameterId?: string;
   parameterName: string;
@@ -239,6 +241,36 @@ export interface ApplyPlanResult {
   accepted: boolean;
   message: string;
   executedCommandIndexes: number[];
+  failedCommandIndex?: number;
+  failedCommandType?: AbletonCommand['type'];
+  snapshotConfirmed?: boolean;
+  suspect?: boolean;
+}
+
+export interface ExecutionTraceEntry {
+  id: string;
+  planId: string;
+  timestamp: string;
+  kind: 'batch' | 'step' | 'result' | 'snapshot' | 'error';
+  level: 'info' | 'success' | 'error' | 'warning';
+  message: string;
+  commandIndex?: number;
+  commandType?: AbletonCommand['type'];
+  ok?: boolean;
+  commandPayload?: AbletonCommand;
+  code?: string;
+}
+
+export interface ExecutionTrace {
+  planId: string;
+  mode: 'bridge' | 'mock' | 'self_test';
+  status: 'running' | 'succeeded' | 'failed' | 'suspect';
+  startedAt: string;
+  finishedAt?: string;
+  summary?: string;
+  snapshotRevisionBefore?: string;
+  snapshotRevisionAfter?: string;
+  entries: ExecutionTraceEntry[];
 }
 
 export interface ChatTurn {
@@ -256,16 +288,42 @@ export interface CoproducerState {
   chat: ChatTurn[];
   pendingPlans: ActionPlan[];
   references: ReferenceAnalysis[];
+  settings: AiSettings;
   lastError?: string;
+  activeExecution?: ExecutionTrace;
+  lastExecution?: ExecutionTrace;
 }
 
 export interface ConversationResponse {
   reply: string;
   plan?: ActionPlan;
+  source: 'heuristic' | 'model';
+  warning?: string;
 }
 
 export interface ConversationRequest {
   message: string;
   snapshot: ContextSnapshot;
   references: ReferenceAnalysis[];
+  chatHistory?: ChatTurn[];
+}
+
+export interface AiSettings {
+  provider: AiProvider;
+  model: string;
+  baseUrl: string;
+  apiKey?: string;
+  systemPrompt?: string;
+  temperature: number;
+}
+
+export interface AiConnectionTestResult {
+  ok: boolean;
+  message: string;
+  provider: AiProvider;
+}
+
+export interface BridgeInstallInfo {
+  bridgeDevicePath: string;
+  bridgeFolderPath: string;
 }

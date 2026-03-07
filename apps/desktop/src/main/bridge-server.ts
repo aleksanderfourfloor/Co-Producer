@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type {
   BridgeAnalysisResultMessage,
+  BridgeCommandStartedMessage,
+  BridgeCommandStepResultMessage,
   BridgeErrorMessage,
   BridgeHelloMessage,
   BridgeInboundMessage,
@@ -14,14 +16,21 @@ interface BridgeServerEvents {
   hello: [message: BridgeHelloMessage];
   snapshot: [message: BridgeSnapshotUpdateMessage];
   analysis: [message: BridgeAnalysisResultMessage];
+  commandStarted: [message: BridgeCommandStartedMessage];
+  commandStep: [message: BridgeCommandStepResultMessage];
   errorMessage: [message: BridgeErrorMessage];
   disconnected: [];
+}
+
+interface PendingExecution {
+  resolve: (result: ApplyPlanResult) => void;
+  timeout: NodeJS.Timeout;
 }
 
 export class BridgeServer extends EventEmitter<BridgeServerEvents> {
   private server?: WebSocketServer;
   private socket?: WebSocket;
-  private pendingExecution = new Map<string, (result: ApplyPlanResult) => void>();
+  private pendingExecution = new Map<string, PendingExecution>();
 
   start(port = 49741): void {
     this.server = new WebSocketServer({ host: '127.0.0.1', port });
@@ -36,6 +45,16 @@ export class BridgeServer extends EventEmitter<BridgeServerEvents> {
         if (this.socket === socket) {
           this.socket = undefined;
         }
+        for (const [planId, pending] of this.pendingExecution.entries()) {
+          clearTimeout(pending.timeout);
+          pending.resolve({
+            planId,
+            accepted: false,
+            message: 'Ableton bridge disconnected before execution completed.',
+            executedCommandIndexes: []
+          });
+        }
+        this.pendingExecution.clear();
         this.emit('disconnected');
       });
     });
@@ -44,6 +63,9 @@ export class BridgeServer extends EventEmitter<BridgeServerEvents> {
   stop(): void {
     this.socket?.close();
     this.server?.close();
+    for (const pending of this.pendingExecution.values()) {
+      clearTimeout(pending.timeout);
+    }
     this.pendingExecution.clear();
   }
 
@@ -68,22 +90,16 @@ export class BridgeServer extends EventEmitter<BridgeServerEvents> {
       plan
     });
 
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.pendingExecution.delete(plan.id);
-        resolve({
-          planId: plan.id,
-          accepted: false,
-          message: 'Bridge execution timed out.',
-          executedCommandIndexes: []
-        });
-      }, 15000);
+    return this.awaitExecution(plan.id, 15000);
+  }
 
-      this.pendingExecution.set(plan.id, (result) => {
-        clearTimeout(timeout);
-        resolve(result);
-      });
+  runSelfTest(planId: string): Promise<ApplyPlanResult> {
+    this.send({
+      type: 'self_test:request',
+      planId
     });
+
+    return this.awaitExecution(planId, 20000);
   }
 
   private send(message: BridgeOutboundMessage): void {
@@ -117,11 +133,18 @@ export class BridgeServer extends EventEmitter<BridgeServerEvents> {
       case 'analysis:result':
         this.emit('analysis', message);
         break;
+      case 'command:started':
+        this.emit('commandStarted', message);
+        break;
+      case 'command:step_result':
+        this.emit('commandStep', message);
+        break;
       case 'command:result': {
-        const resolver = this.pendingExecution.get(message.result.planId);
-        if (resolver) {
+        const pending = this.pendingExecution.get(message.result.planId);
+        if (pending) {
           this.pendingExecution.delete(message.result.planId);
-          resolver(message.result);
+          clearTimeout(pending.timeout);
+          pending.resolve(message.result);
         }
         break;
       }
@@ -129,5 +152,24 @@ export class BridgeServer extends EventEmitter<BridgeServerEvents> {
         this.emit('errorMessage', message);
         break;
     }
+  }
+
+  private awaitExecution(planId: string, timeoutMs: number): Promise<ApplyPlanResult> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingExecution.delete(planId);
+        resolve({
+          planId,
+          accepted: false,
+          message: 'Bridge execution timed out.',
+          executedCommandIndexes: []
+        });
+      }, timeoutMs);
+
+      this.pendingExecution.set(planId, {
+        resolve,
+        timeout
+      });
+    });
   }
 }

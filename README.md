@@ -1,53 +1,170 @@
 # Co-Producer
 
-Co-Producer is a macOS-first Ableton Live 12.3+ companion app with a Max for Live bridge. It keeps a live snapshot of the current set, gives arrangement/composition guidance, and can apply grouped changes back into Ableton after explicit approval.
+Co-Producer is a macOS-first Ableton Live companion app. It gives project-aware music production guidance, proposes grouped Ableton actions, and can apply native Live edits through a Max for Live bridge after approval.
 
-## What is in this repo
+## Before you start
 
-- An Electron + React + TypeScript desktop app
-- Shared session, protocol, and command types
-- A co-producer orchestration layer with heuristic planning and analysis
-- Max for Live bridge assets and protocol documentation
+Co-Producer is not a standalone web app. To get meaningful value from it, you need all of the following:
 
-## Core capabilities in v1
+- macOS
+- Ableton Live 12.3 or newer
+- Max for Live
+- Node.js 20 or newer
+- npm
+- Ollama for local AI inference
 
-- Whole-set plus current-selection context snapshots
-- Text chat with context-aware arrangement/composition guidance
-- Grouped action plans for track creation, MIDI generation, and native Ableton device insertion
-- Stale-plan protection via snapshot revision matching
-- On-demand reference file analysis
+Without Ollama, the app falls back to a deterministic offline planner. That is useful for basic workflow testing, but not for real model-backed chat quality.
 
-## Deferred in v1
+## What must be installed
 
-- Arbitrary VST insertion and parameter control
-- Continuous background listening
-- Direct YouTube and SoundCloud ingestion
-- Windows support
-- Voice-first interaction
+### 1. Node.js and npm
 
-## Scripts
+Verify:
 
-- `npm install`
-- `npm run dev`
-- `npm run build`
-- `npm run typecheck`
-- `npm run test`
+```bash
+node -v
+npm -v
+```
+
+If either command is missing, install Node.js 20 or newer.
+
+### 2. Ollama
+
+On macOS, install Ollama by downloading the app and placing it in `Applications`.
+
+After installation:
+
+1. Open the Ollama app
+2. Let it install or link the `ollama` CLI if prompted
+3. In Terminal, pull a model:
+
+```bash
+ollama pull llama3.1:8b
+```
+
+4. Verify Ollama is serving:
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+If that succeeds, Co-Producer can use:
+
+- Provider: `Ollama / local`
+- Base URL: `http://127.0.0.1:11434/v1`
+- Model: `llama3.1:8b`
+
+### 3. Ableton Live + Max for Live
+
+You need a working Ableton Live 12.3+ install with Max for Live available. The bridge device will not work without Max for Live.
+
+## Project setup
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the desktop app in development:
+
+```bash
+npm run dev
+```
+
+Other useful commands:
+
+```bash
+npm run test
+npm run typecheck
+npm run build
+```
+
+## First-run quick start
+
+### A. Get the desktop app running
+
+```bash
+npm run dev
+```
+
+This opens the Electron app.
+
+### B. Connect AI
+
+1. Open the app
+2. Open `Setup`
+3. Select:
+   - Provider: `Ollama / local`
+   - Base URL: `http://127.0.0.1:11434/v1`
+   - Model: `llama3.1:8b`
+4. Click `Save AI settings`
+5. Click `Test AI`
+
+If `Test AI` fails:
+
+- make sure Ollama is installed
+- make sure the Ollama app is running
+- make sure `ollama pull llama3.1:8b` completed
+- make sure `curl http://127.0.0.1:11434/api/tags` works
+
+### C. Connect Ableton
+
+1. Keep Co-Producer running
+2. Open Ableton Live
+3. Create or select a MIDI track
+4. Drag [Co-Producer Bridge.amxd](/Users/aleksander/Documents/Development/co-producer/bridges/max-for-live/Co-Producer%20Bridge.amxd) onto that MIDI track
+5. Wait for the app status to switch from `Mock session` to `Ableton live`
+
+Bridge details are documented in [bridges/max-for-live/README.md](/Users/aleksander/Documents/Development/co-producer/bridges/max-for-live/README.md).
+
+## What works today
+
+- chat-first desktop workflow
+- selected-track-aware offline planning
+- grouped action plans
+- revision-safe apply flow
+- mock execution when Ableton is not connected
+- Max for Live bridge device artifact
+- local-model integration through Ollama's OpenAI-compatible API
+
+## What does not fully work yet
+
+- high-quality music reasoning without a real model connection
+- one-click automated Ableton bridge installation
+- real audio listening from Live outputs
+- arbitrary VST/plugin control
+- polished end-to-end production-agent behavior
+
+## How to test something meaningful
+
+### Offline but useful
+
+These prompts should now create actual action plans even without Ollama or Ableton:
+
+- `Write an 8 bar pad idea on the selected track with reverb`
+- `Add an 8 bar bass idea with saturation`
+- `Add a transition into the drop`
+- `Give me arrangement advice`
+
+### With Ollama connected
+
+You should get stronger responses and more flexible plans once Ollama is connected.
+
+### With Ableton connected
+
+Once the bridge is connected, applying a plan should target the live set instead of the mock session.
 
 ## Project layout
 
 - `apps/desktop`: Electron main process, preload bridge, and React renderer
 - `packages/shared`: shared domain types, mock data, and bridge protocol
-- `packages/core`: session store, analysis, and planning/orchestration logic
-- `bridges/max-for-live`: Max for Live bridge assets and setup notes
-- `docs`: architecture notes
+- `packages/core`: planning, orchestration, and session logic
+- `bridges/max-for-live`: bridge device, scripts, and Live integration notes
+- `docs`: architecture, roadmap, and manifesto
 
-## Runtime assumptions
+## Docs
 
-- macOS
-- Ableton Live 12.3+
-- Max for Live available
-- A local bridge connection on `ws://127.0.0.1:49741`
-
-## Notes
-
-The desktop app ships with a mock session fallback so the UI can be explored before wiring it to Ableton. The real Ableton control path is defined by the bridge protocol and the Max for Live scripts in `bridges/max-for-live`.
+- [Architecture](/Users/aleksander/Documents/Development/co-producer/docs/architecture.md)
+- [Roadmap](/Users/aleksander/Documents/Development/co-producer/docs/roadmap.md)
+- [Manifesto](/Users/aleksander/Documents/Development/co-producer/docs/manifesto.md)

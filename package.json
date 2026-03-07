@@ -7,11 +7,13 @@
   "main": "dist/main/index.js",
   "packageManager": "npm@11.6.2",
   "scripts": {
+    "build:bridge-device": "node bridges/max-for-live/build-bridge-device.mjs",
     "dev": "electron-vite dev",
+    "prebuild": "npm run build:bridge-device",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test packages/core/src/**/*.test.ts"
+    "test": "node --import tsx --test packages/core/src/**/*.test.ts apps/desktop/src/main/**/*.test.ts"
   },
   "dependencies": {
     "react": "^18.2.0",
