@@ -43,6 +43,21 @@ test('selected-track request writes directly onto the selected track', () => {
   assert.ok(!response.plan?.commands.some((command) => command.type === 'create_midi_track'));
 });
 
+test('explicit audio-track request builds a direct audio-track plan', () => {
+  const response = createConversationResponse({
+    message: 'create a new audio track and call it kick',
+    snapshot: mockSnapshot,
+    references: []
+  });
+
+  assert.ok(response.plan);
+  assert.equal(response.plan?.commands.length, 1);
+  assert.equal(response.plan?.commands[0]?.type, 'create_audio_track');
+  if (response.plan?.commands[0]?.type === 'create_audio_track') {
+    assert.match(response.plan.commands[0].trackName, /kick/i);
+  }
+});
+
 test('help prompt returns concrete capability guidance', () => {
   const response = createConversationResponse({
     message: 'how do you help',

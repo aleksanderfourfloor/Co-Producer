@@ -12,6 +12,17 @@ export type TrackType = 'midi' | 'audio' | 'return' | 'master';
 export type DeviceType = 'instrument' | 'audio_effect' | 'midi_effect' | 'unknown';
 export type AnalysisTarget = 'selection' | 'track' | 'master' | 'reference_file';
 export type BridgeStatus = 'waiting' | 'syncing' | 'connected' | 'executing' | 'error' | 'mock';
+export type BridgeKind = 'mock' | 'max_for_live' | 'control_surface';
+export type BridgeMaturity = 'planned' | 'experimental' | 'preferred' | 'stable';
+export type BridgeCapability =
+  | 'snapshot'
+  | 'analysis'
+  | 'commands'
+  | 'selected_context'
+  | 'transport'
+  | 'native_devices'
+  | 'audio_tap'
+  | 'authoritative_write';
 export type AiProvider = 'heuristic' | 'ollama' | 'openai_compatible';
 
 export interface MidiNote {
@@ -283,7 +294,11 @@ export interface ChatTurn {
 
 export interface CoproducerState {
   bridgeStatus: BridgeStatus;
+  bridgeKind: BridgeKind;
+  bridgeMaturity: BridgeMaturity;
   bridgeVersion?: string;
+  bridgeCapabilities: BridgeCapability[];
+  bridgeAuthoritative: boolean;
   snapshot: ContextSnapshot;
   chat: ChatTurn[];
   pendingPlans: ActionPlan[];
@@ -323,7 +338,17 @@ export interface AiConnectionTestResult {
   provider: AiProvider;
 }
 
+export interface BridgeInstallTarget {
+  kind: Exclude<BridgeKind, 'mock'>;
+  maturity: BridgeMaturity;
+  name: string;
+  description: string;
+  entryPath: string;
+  folderPath: string;
+  installHint: string;
+}
+
 export interface BridgeInstallInfo {
-  bridgeDevicePath: string;
-  bridgeFolderPath: string;
+  recommendedBridgeKind: Exclude<BridgeKind, 'mock'>;
+  targets: BridgeInstallTarget[];
 }

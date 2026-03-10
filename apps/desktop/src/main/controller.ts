@@ -14,7 +14,7 @@ import type {
   ReferenceAnalysis
 } from '@shared/types';
 import { mockSnapshot } from '@shared/mock-data';
-import { CoproducerService, SessionStore, applyCommandsToSnapshot, createId } from '@core/index';
+import { CoproducerService, SessionStore, createId } from '@core/index';
 import { BridgeServer } from './bridge-server';
 
 interface ControllerEvents {
@@ -44,7 +44,7 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
 
   start(): void {
     this.bridgeServer.on('hello', (message) => {
-      this.store.setBridgeStatus('syncing', message.version);
+      this.store.setBridgeStatus('syncing', this.createBridgeStateUpdate(message));
       this.store.setError(undefined);
       this.startSnapshotPolling();
       this.broadcastState();
@@ -135,6 +135,7 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
     this.bridgeServer.on('disconnected', () => {
       this.stopSnapshotPolling();
       this.resolveSnapshotWaiters();
+      const previousState = this.store.getState();
       const activeExecution = this.store.getState().activeExecution;
       if (activeExecution) {
         this.store.finishExecution(activeExecution.planId, {
@@ -151,9 +152,15 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
           ]
         });
       }
-      this.store.setBridgeStatus('mock');
-      this.store.setError('Ableton bridge disconnected. Falling back to mock mode.');
-      this.addAssistantTurn('Ableton bridge disconnected. Falling back to mock mode.');
+      this.store.setBridgeStatus('waiting', {
+        bridgeVersion: previousState.bridgeVersion,
+        bridgeKind: previousState.bridgeKind === 'mock' ? 'max_for_live' : previousState.bridgeKind,
+        bridgeMaturity: previousState.bridgeKind === 'control_surface' ? 'preferred' : 'experimental',
+        bridgeCapabilities: [],
+        bridgeAuthoritative: false
+      });
+      this.store.setError('Ableton bridge disconnected. Reconnecting. Live actions are paused until the bridge is back.');
+      this.addAssistantTurn('Ableton bridge disconnected. Reconnecting. Live actions are paused until the bridge is back.');
       this.broadcastState();
     });
 
@@ -185,8 +192,20 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
       this.store.addPlan(response.plan);
     }
 
+    const shouldAutoApply = Boolean(
+      response.plan && this.shouldAutoApplyPlan(message, response.plan) && this.canApplyLiveWrites(currentState)
+    );
+
     const extraNotes = [
-      response.plan ? 'Review the action plan and click Apply selected steps to execute it in Ableton Live.' : undefined,
+      response.plan
+        ? shouldAutoApply
+          ? 'Direct command detected. Applying this plan in Ableton now.'
+          : this.canApplyLiveWrites(currentState)
+          ? 'Review the action plan and click Apply selected steps to execute it in Ableton Live.'
+          : this.bridgeServer.isConnected()
+            ? 'The connected Ableton bridge is experimental. Run bridge self-test successfully before applying plans, or install the control-surface bridge.'
+            : 'Review the action plan. Ableton is currently disconnected, so applying is blocked until reconnection.'
+        : undefined,
       response.warning,
       response.source === 'model' ? 'Model-backed response.' : undefined
     ]
@@ -202,6 +221,15 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
     });
 
     this.broadcastState();
+
+    if (shouldAutoApply && response.plan) {
+      await this.applyPlan({
+        planId: response.plan.id,
+        snapshotRevision: response.plan.snapshotRevision,
+        selectedCommandIndexes: response.plan.commands.map((_, index) => index)
+      });
+    }
+
     return this.store.getState();
   }
 
@@ -235,6 +263,20 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
     const selectedCommands = validation.plan.commands.filter((_, index) =>
       validation.result.executedCommandIndexes.includes(index)
     );
+
+    if (this.bridgeServer.isConnected() && !this.canApplyLiveWrites(state)) {
+      const message = this.getAuthoritativeWriteRequiredMessage(state);
+      const failure: ApplyPlanResult = {
+        planId: validation.plan.id,
+        accepted: false,
+        message,
+        executedCommandIndexes: []
+      };
+      this.store.setError(message);
+      this.addAssistantTurn(message);
+      this.broadcastState();
+      return failure;
+    }
 
     if (this.bridgeServer.isConnected()) {
       const executionPlan: ActionPlan = {
@@ -361,46 +403,17 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
       }
     }
 
-    const nextSnapshot = applyCommandsToSnapshot(state.snapshot, selectedCommands);
-    this.store.startExecution(this.createExecutionTrace(validation.plan.id, 'mock', state.snapshot.setRevision));
-    this.store.appendExecutionEntry(
-      this.createExecutionEntry(validation.plan.id, {
-        kind: 'batch',
-        level: 'info',
-        message: `Applying ${selectedCommands.length} command(s) in mock mode.`
-      })
-    );
-    this.store.upsertSnapshot(nextSnapshot);
-    this.store.clearPlan(validation.plan.id);
-    this.store.setError(undefined);
-    this.store.finishExecution(validation.plan.id, {
-      finishedAt: new Date().toISOString(),
-      status: 'succeeded',
-      summary: 'Plan applied in mock mode.',
-      snapshotRevisionAfter: nextSnapshot.setRevision,
-      entries: [
-        ...(this.store.getState().activeExecution?.entries ?? []),
-        this.createExecutionEntry(validation.plan.id, {
-          kind: 'result',
-          level: 'success',
-          message: 'Plan applied in mock mode.',
-          ok: true
-        })
-      ]
-    });
-    this.store.setBridgeStatus('mock', state.bridgeVersion);
-    this.addAssistantTurn(
-      `Applied ${selectedCommands.length} command(s) in mock mode. Reconnect the Ableton bridge to target the live set.`
-    );
-    this.broadcastState();
-
-    return {
+    const message = 'Ableton is disconnected. Reconnect the bridge, run self-test, then apply the plan to execute in Live.';
+    const failure: ApplyPlanResult = {
       planId: validation.plan.id,
-      accepted: true,
-      message: 'Plan applied in mock mode.',
-      executedCommandIndexes: validation.result.executedCommandIndexes,
-      snapshotConfirmed: true
+      accepted: false,
+      message,
+      executedCommandIndexes: []
     };
+    this.store.setError(message);
+    this.addAssistantTurn(message);
+    this.broadcastState();
+    return failure;
   }
 
   saveReference(reference: ReferenceAnalysis): CoproducerState {
@@ -482,6 +495,15 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
       let finalResult = result;
       let traceStatus: ExecutionTrace['status'] = result.accepted ? 'succeeded' : 'failed';
       let nextBridgeStatus: CoproducerState['bridgeStatus'] = result.accepted ? 'connected' : 'error';
+      let nextBridgeUpdate:
+        | {
+            bridgeVersion?: string;
+            bridgeKind: CoproducerState['bridgeKind'];
+            bridgeMaturity: CoproducerState['bridgeMaturity'];
+            bridgeCapabilities: CoproducerState['bridgeCapabilities'];
+            bridgeAuthoritative: boolean;
+          }
+        | undefined;
 
       if (result.accepted) {
         try {
@@ -518,8 +540,30 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
           nextBridgeStatus = 'error';
           this.store.setError('Ableton bridge self-test reported success without a confirming snapshot change.');
         }
+        if (snapshotConfirmed && state.bridgeKind === 'max_for_live') {
+          const capabilities: CoproducerState['bridgeCapabilities'] = state.bridgeCapabilities.includes('authoritative_write')
+            ? state.bridgeCapabilities
+            : [...state.bridgeCapabilities, 'authoritative_write'];
+          nextBridgeUpdate = {
+            bridgeVersion: state.bridgeVersion,
+            bridgeKind: state.bridgeKind,
+            bridgeMaturity: state.bridgeMaturity,
+            bridgeCapabilities: capabilities,
+            bridgeAuthoritative: true
+          };
+        }
       } else {
         this.store.setError(result.message);
+      }
+
+      if (state.bridgeKind === 'max_for_live' && (!finalResult.accepted || finalResult.suspect)) {
+        nextBridgeUpdate = {
+          bridgeVersion: state.bridgeVersion,
+          bridgeKind: state.bridgeKind,
+          bridgeMaturity: state.bridgeMaturity,
+          bridgeCapabilities: state.bridgeCapabilities.filter((capability) => capability !== 'authoritative_write'),
+          bridgeAuthoritative: false
+        };
       }
 
       this.store.finishExecution(planId, {
@@ -529,7 +573,7 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
         snapshotRevisionAfter: this.store.getState().snapshot.setRevision,
         entries: traceEntries
       });
-      this.store.setBridgeStatus(nextBridgeStatus, state.bridgeVersion);
+      this.store.setBridgeStatus(nextBridgeStatus, nextBridgeUpdate ?? state.bridgeVersion);
       this.addAssistantTurn(finalResult.message);
       this.broadcastState();
       return finalResult;
@@ -554,7 +598,18 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
         status: 'failed',
         summary: message
       });
-      this.store.setBridgeStatus('error', state.bridgeVersion);
+      this.store.setBridgeStatus(
+        'error',
+        state.bridgeKind === 'max_for_live'
+          ? {
+              bridgeVersion: state.bridgeVersion,
+              bridgeKind: state.bridgeKind,
+              bridgeMaturity: state.bridgeMaturity,
+              bridgeCapabilities: state.bridgeCapabilities.filter((capability) => capability !== 'authoritative_write'),
+              bridgeAuthoritative: false
+            }
+          : state.bridgeVersion
+      );
       this.store.setError(message);
       this.addAssistantTurn(message);
       this.broadcastState();
@@ -606,6 +661,35 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
       content,
       createdAt: new Date().toISOString()
     };
+  }
+
+  private canApplyLiveWrites(state: CoproducerState): boolean {
+    return (
+      this.bridgeServer.isConnected() &&
+      state.bridgeAuthoritative &&
+      state.bridgeCapabilities.includes('authoritative_write')
+    );
+  }
+
+  private getAuthoritativeWriteRequiredMessage(state: CoproducerState): string {
+    if (state.bridgeKind === 'max_for_live') {
+      return 'The connected Ableton Max bridge is experimental. Run bridge self-test successfully before applying plans to the live set, or install the control-surface bridge.';
+    }
+
+    return 'The connected Ableton bridge is not approved for authoritative writes yet. Install the preferred control-surface bridge before applying plans to the live set.';
+  }
+
+  private shouldAutoApplyPlan(message: string, plan: ActionPlan): boolean {
+    if (plan.commands.length !== 1) {
+      return false;
+    }
+
+    const commandType = plan.commands[0]?.type;
+    if (commandType !== 'create_audio_track' && commandType !== 'create_midi_track') {
+      return false;
+    }
+
+    return /\b(create|add|make)\b[\s\S]*\b(audio|midi)\b[\s\S]*\btrack\b/i.test(message);
   }
 
   private createExecutionTrace(
@@ -675,5 +759,28 @@ export class DesktopController extends EventEmitter<ControllerEvents> {
     }
 
     this.snapshotWaiters = remaining;
+  }
+
+  private createBridgeStateUpdate(message: {
+    version: string;
+    bridgeKind?: CoproducerState['bridgeKind'];
+    capabilities: CoproducerState['bridgeCapabilities'];
+    authoritativeWrite?: boolean;
+  }): {
+    bridgeVersion: string;
+    bridgeKind: CoproducerState['bridgeKind'];
+    bridgeMaturity: CoproducerState['bridgeMaturity'];
+    bridgeCapabilities: CoproducerState['bridgeCapabilities'];
+    bridgeAuthoritative: boolean;
+  } {
+    const bridgeKind = message.bridgeKind ?? 'max_for_live';
+
+    return {
+      bridgeVersion: message.version,
+      bridgeKind,
+      bridgeMaturity: bridgeKind === 'control_surface' ? 'preferred' : 'experimental',
+      bridgeCapabilities: message.capabilities,
+      bridgeAuthoritative: Boolean(message.authoritativeWrite)
+    };
   }
 }

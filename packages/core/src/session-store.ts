@@ -1,5 +1,8 @@
 import type {
   ActionPlan,
+  BridgeCapability,
+  BridgeKind,
+  BridgeMaturity,
   BridgeStatus,
   ChatTurn,
   ContextSnapshot,
@@ -17,6 +20,10 @@ export class SessionStore {
   constructor(initialSnapshot: ContextSnapshot, bridgeStatus: BridgeStatus = 'mock') {
     this.state = {
       bridgeStatus,
+      bridgeKind: bridgeStatus === 'mock' ? 'mock' : 'mock',
+      bridgeMaturity: 'planned',
+      bridgeCapabilities: [],
+      bridgeAuthoritative: false,
       snapshot: initialSnapshot,
       chat: [],
       pendingPlans: [],
@@ -40,11 +47,31 @@ export class SessionStore {
     };
   }
 
-  setBridgeStatus(status: BridgeStatus, bridgeVersion?: string): CoproducerState {
+  setBridgeStatus(
+    status: BridgeStatus,
+    bridgeUpdate?:
+      | string
+      | {
+          bridgeVersion?: string;
+          bridgeKind?: BridgeKind;
+          bridgeMaturity?: BridgeMaturity;
+          bridgeCapabilities?: BridgeCapability[];
+          bridgeAuthoritative?: boolean;
+        }
+  ): CoproducerState {
+    const normalizedUpdate =
+      typeof bridgeUpdate === 'string'
+        ? { bridgeVersion: bridgeUpdate }
+        : bridgeUpdate;
+
     this.state = {
       ...this.state,
       bridgeStatus: status,
-      bridgeVersion: bridgeVersion ?? this.state.bridgeVersion
+      bridgeVersion: normalizedUpdate?.bridgeVersion ?? this.state.bridgeVersion,
+      bridgeKind: normalizedUpdate?.bridgeKind ?? this.state.bridgeKind,
+      bridgeMaturity: normalizedUpdate?.bridgeMaturity ?? this.state.bridgeMaturity,
+      bridgeCapabilities: normalizedUpdate?.bridgeCapabilities ?? this.state.bridgeCapabilities,
+      bridgeAuthoritative: normalizedUpdate?.bridgeAuthoritative ?? this.state.bridgeAuthoritative
     };
 
     return this.getState();

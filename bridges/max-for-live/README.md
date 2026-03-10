@@ -1,6 +1,10 @@
 # Max for Live Bridge
 
-This folder contains the scripts and protocol notes for the Max for Live side of Co-Producer. The desktop app listens on `ws://127.0.0.1:49741` and expects a local bridge client running inside Max for Live.
+Status: experimental
+
+This folder contains the scripts and protocol notes for the experimental Max for Live side of Co-Producer. The desktop app listens on `ws://127.0.0.1:49741` and expects a local bridge client running inside Max for Live.
+
+The primary production direction is now the control-surface bridge in [bridges/control-surface/README.md](/Users/aleksander/Documents/Development/co-producer/bridges/control-surface/README.md). The Max bridge remains useful for diagnostics, iteration, and future audio-tap work, but it should not be treated as the long-term authoritative write path.
 
 ## Prerequisites
 

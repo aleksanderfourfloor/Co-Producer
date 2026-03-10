@@ -39,6 +39,18 @@ function parseCanonicalIndex(path, token) {
   return parseInt(parts[position + 1], 10);
 }
 
+function normalizeTextValue(value, fallback) {
+  if (value === null || value === undefined) {
+    return fallback || '';
+  }
+
+  if (value instanceof Array) {
+    return String(value.join(' ')).trim() || fallback || '';
+  }
+
+  return String(value);
+}
+
 function rgbToInt(hex) {
   if (!hex) {
     return 0;
@@ -80,7 +92,7 @@ function buildClipSummary(trackIndex, slotIndex) {
   var clip = liveApi('live_set tracks ' + trackIndex + ' clip_slots ' + slotIndex + ' clip');
   return {
     id: 'clip-' + trackIndex + '-' + slotIndex,
-    name: readProperty(clip, 'name') || 'Clip ' + (slotIndex + 1),
+    name: normalizeTextValue(readProperty(clip, 'name'), 'Clip ' + (slotIndex + 1)),
     slotIndex: slotIndex,
     startBeat: Number(readProperty(clip, 'start_time') || 0),
     endBeat: Number(readProperty(clip, 'end_time') || readProperty(clip, 'length') || 0),
@@ -100,13 +112,13 @@ function buildDeviceSummary(trackIndex, deviceIndex) {
     );
     parameters.push({
       id: 'param-' + trackIndex + '-' + deviceIndex + '-' + paramIndex,
-      name: readProperty(parameter, 'name') || 'Parameter ' + (paramIndex + 1),
+      name: normalizeTextValue(readProperty(parameter, 'name'), 'Parameter ' + (paramIndex + 1)),
       value: Number(readProperty(parameter, 'value') || 0),
       displayValue: String(readProperty(parameter, 'display_value') || '')
     });
   }
 
-  var className = readProperty(device, 'class_name') || readProperty(device, 'name') || 'Device';
+  var className = normalizeTextValue(readProperty(device, 'class_name') || readProperty(device, 'name'), 'Device');
   var type = 'audio_effect';
   if (/operator|wavetable|analog|drum rack|simpler|sampler|drift/i.test(className)) {
     type = 'instrument';
@@ -116,7 +128,7 @@ function buildDeviceSummary(trackIndex, deviceIndex) {
 
   return {
     id: 'device-' + trackIndex + '-' + deviceIndex,
-    name: readProperty(device, 'name') || className,
+    name: normalizeTextValue(readProperty(device, 'name'), className),
     className: className,
     type: type,
     isNative: true,
@@ -130,7 +142,7 @@ function buildTrackSummary(trackIndex) {
   var deviceCount = track.getcount('devices');
   var clips = [];
   var devices = [];
-  var name = readProperty(track, 'name') || 'Track ' + (trackIndex + 1);
+  var name = normalizeTextValue(readProperty(track, 'name'), 'Track ' + (trackIndex + 1));
 
   for (var slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
     var clip = buildClipSummary(trackIndex, slotIndex);
@@ -529,66 +541,173 @@ function replaceClipNotes(clip, notes) {
   clip.call('done');
 }
 
-function createMidiTrackHandler(command, context) {
-  var insertIndex = command.insertIndex !== undefined ? command.insertIndex : -1;
-  songApi().call('create_midi_track', insertIndex);
+function normalizeInsertIndex(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  var parsed = Number(value);
+  return isNaN(parsed) ? null : parsed;
+}
+
+function createTrackHandler(command, context, options) {
+  var requestedInsertIndex = normalizeInsertIndex(command.insertIndex);
+  var commandName = options.commandName;
+  var trackLabel = options.trackLabel;
+  var appendIndex = context.snapshot.tracks.length;
+  var attempts = [];
+  var seen = {};
+  var attemptIndex = 0;
+  var attemptLabel = '';
+
+  function callCreateTrack(withIndex, index) {
+    if (withIndex) {
+      songApi().call(commandName, index);
+    } else {
+      songApi().call(commandName);
+    }
+  }
+
+  function pushAttempt(label, withIndex, index) {
+    var key = withIndex ? label + ':' + index : label;
+    if (seen[key]) {
+      return;
+    }
+    seen[key] = true;
+    attempts.push({
+      label: label,
+      withIndex: withIndex,
+      index: index
+    });
+  }
+
+  if (requestedInsertIndex !== null) {
+    pushAttempt('requested_index', true, requestedInsertIndex);
+  }
+  pushAttempt('no_arg_default', false, 0);
+  pushAttempt('append_minus_one', true, -1);
+  pushAttempt('append_last_index', true, appendIndex);
+
+  function runAttempt(index, reason) {
+    var attempt = attempts[index];
+    if (!attempt) {
+      return false;
+    }
+
+    attemptLabel = attempt.label;
+    log(
+      'Running ' +
+        commandName +
+        ' attempt ' +
+        (index + 1) +
+        '/' +
+        attempts.length +
+        ' (' +
+        attempt.label +
+        (attempt.withIndex ? ', index=' + attempt.index : ', no index') +
+        ')' +
+        (reason ? ' after ' + reason : '') +
+        '.'
+    );
+    callCreateTrack(attempt.withIndex, attempt.index);
+    return true;
+  }
+
+  runAttempt(attemptIndex, '');
+
   return {
-    message: 'Created MIDI track at index ' + (insertIndex >= 0 ? insertIndex : context.snapshot.tracks.length) + '.',
-    settleMs: 180,
-    verifyRetryCount: 6,
-    verifyRetryDelayMs: 120,
+    message: 'Created ' + trackLabel + ' track (attempt: ' + attemptLabel + ').',
+    settleMs: 220,
+    verifyRetryCount: 8,
+    verifyRetryDelayMs: 140,
     verify: function(beforeSnapshot, afterSnapshot, _command, verifyContext) {
+      var beforeCount = beforeSnapshot.tracks.length;
+      var afterCount = afterSnapshot.tracks.length;
       var requestedIndex = getExpectedTrackIndexForInsert(beforeSnapshot, command);
       var actualIndex = detectInsertedTrackIndex(beforeSnapshot, afterSnapshot);
-      if (actualIndex === null) {
+      var selectedIndex = afterSnapshot.selection ? afterSnapshot.selection.trackIndex : null;
+
+      if (afterCount !== beforeCount + 1) {
         return false;
+      }
+
+      if (actualIndex === null) {
+        if (
+          selectedIndex !== null &&
+          selectedIndex !== undefined &&
+          !isNaN(selectedIndex) &&
+          selectedIndex >= 0 &&
+          selectedIndex < afterCount
+        ) {
+          actualIndex = selectedIndex;
+        } else if (requestedIndex >= 0 && requestedIndex < afterCount) {
+          actualIndex = requestedIndex;
+        } else {
+          actualIndex = afterCount - 1;
+        }
       }
 
       verifyContext.trackIndexMap[requestedIndex] = actualIndex;
       verifyContext.lastCreatedTrackIndex = actualIndex;
+      log(
+        'Verified ' +
+          commandName +
+          ' by track count delta (' +
+          beforeCount +
+          ' -> ' +
+          afterCount +
+          '), resolved index ' +
+          actualIndex +
+          '.'
+      );
       return true;
+    },
+    afterVerify: function(_beforeSnapshot, _afterSnapshot, _command, verifyContext) {
+      if (!command.trackName) {
+        return;
+      }
+
+      var nameTrackCommand = {
+        trackIndex: verifyContext.lastCreatedTrackIndex,
+        name: command.trackName
+      };
+      var trackRef = resolveTrackReference(nameTrackCommand, verifyContext);
+      trackRef.api.set('name', command.trackName);
+      log('Named created track ' + verifyContext.lastCreatedTrackIndex + ' -> "' + command.trackName + '".');
     },
     fallbackExecute: function(beforeSnapshot, _afterSnapshot, _command, verifyContext) {
       if (beforeSnapshot.tracks.length !== verifyContext.snapshot.tracks.length) {
         return false;
       }
-      log('Retrying create_midi_track with append mode (-1).');
-      songApi().call('create_midi_track', -1);
-      return true;
+
+      attemptIndex += 1;
+      return runAttempt(attemptIndex, 'verification timeout');
     },
-    verifyMessage: 'Ableton did not create the requested MIDI track.'
+    verifyMessage:
+      'Ableton did not create the requested ' +
+      trackLabel +
+      ' track. Attempts: ' +
+      attempts
+        .map(function(attempt) {
+          return attempt.withIndex ? attempt.label + '(' + attempt.index + ')' : attempt.label;
+        })
+        .join(', ') +
+      '. Track count remained unchanged after all attempts.'
   };
 }
 
-function createAudioTrackHandler(command, context) {
-  var insertIndex = command.insertIndex !== undefined ? command.insertIndex : -1;
-  songApi().call('create_audio_track', insertIndex);
-  return {
-    message: 'Created audio track at index ' + (insertIndex >= 0 ? insertIndex : context.snapshot.tracks.length) + '.',
-    settleMs: 180,
-    verifyRetryCount: 6,
-    verifyRetryDelayMs: 120,
-    verify: function(beforeSnapshot, afterSnapshot, _command, verifyContext) {
-      var requestedIndex = getExpectedTrackIndexForInsert(beforeSnapshot, command);
-      var actualIndex = detectInsertedTrackIndex(beforeSnapshot, afterSnapshot);
-      if (actualIndex === null) {
-        return false;
-      }
+function createMidiTrackHandler(command, context) {
+  return createTrackHandler(command, context, {
+    commandName: 'create_midi_track',
+    trackLabel: 'MIDI'
+  });
+}
 
-      verifyContext.trackIndexMap[requestedIndex] = actualIndex;
-      verifyContext.lastCreatedTrackIndex = actualIndex;
-      return true;
-    },
-    fallbackExecute: function(beforeSnapshot, _afterSnapshot, _command, verifyContext) {
-      if (beforeSnapshot.tracks.length !== verifyContext.snapshot.tracks.length) {
-        return false;
-      }
-      log('Retrying create_audio_track with append mode (-1).');
-      songApi().call('create_audio_track', -1);
-      return true;
-    },
-    verifyMessage: 'Ableton did not create the requested audio track.'
-  };
+function createAudioTrackHandler(command, context) {
+  return createTrackHandler(command, context, {
+    commandName: 'create_audio_track',
+    trackLabel: 'audio'
+  });
 }
 
 function nameTrackHandler(command, context) {
@@ -601,7 +720,7 @@ function nameTrackHandler(command, context) {
     verifyRetryDelayMs: 120,
     verify: function(_beforeSnapshot, afterSnapshot, _command, verifyContext) {
       var track = getTrackFromSnapshot(afterSnapshot, command, verifyContext);
-      return Boolean(track) && track.name === command.name;
+      return Boolean(track) && normalizeTextValue(track.name, '') === normalizeTextValue(command.name, '');
     },
     verifyMessage: 'Ableton did not rename the requested track.'
   };
@@ -898,7 +1017,7 @@ function continuePlan(context) {
   var attempts = 0;
   var step;
   var executedCommand = false;
-  var fallbackAttempted = false;
+  var fallbackAttempts = 0;
 
   if (context.index >= context.plan.commands.length) {
     completePlan(context);
@@ -937,10 +1056,19 @@ function continuePlan(context) {
           task.schedule(step.verifyRetryDelayMs || 120);
           return;
         }
-        if (step.fallbackExecute && !fallbackAttempted) {
-          fallbackAttempted = true;
-          attempts = 0;
+        if (step.fallbackExecute) {
           if (step.fallbackExecute(beforeSnapshot, context.snapshot, command, context)) {
+            fallbackAttempts += 1;
+            attempts = 0;
+            log(
+              'Fallback attempt ' +
+                fallbackAttempts +
+                ' dispatched for command ' +
+                context.index +
+                ': ' +
+                command.type +
+                '.'
+            );
             activeExecutionTask = task;
             task.schedule(step.verifyRetryDelayMs || 120);
             return;
@@ -991,8 +1119,10 @@ function executePlan(plan, source) {
 
 function buildSelfTestPlan(planId) {
   var snapshot = buildSnapshot();
-  var insertIndex = -1;
-  var requestedTrackIndex = snapshot.tracks.length;
+  var insertIndex = snapshot.selection.trackIndex !== null && snapshot.selection.trackIndex !== undefined
+    ? snapshot.selection.trackIndex + 1
+    : undefined;
+  var requestedTrackIndex = insertIndex !== undefined ? insertIndex : snapshot.tracks.length;
 
   return {
     id: planId,
@@ -1006,11 +1136,6 @@ function buildSelfTestPlan(planId) {
         type: 'create_midi_track',
         trackName: 'Co-Producer Self Test',
         insertIndex: insertIndex
-      },
-      {
-        type: 'name_track',
-        trackIndex: requestedTrackIndex,
-        name: 'Co-Producer Self Test'
       },
       {
         type: 'create_midi_clip',

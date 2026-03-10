@@ -602,7 +602,65 @@ function requestsMusicalMaterial(message: string): boolean {
   );
 }
 
+function parseExplicitTrackCreation(message: string): { type: 'audio' | 'midi'; name?: string } | undefined {
+  const lower = message.toLowerCase();
+  if (!/\b(create|add|new|make)\b/.test(lower) || !/\btrack\b/.test(lower)) {
+    return undefined;
+  }
+
+  const type = /\baudio\b/.test(lower) ? 'audio' : /\bmidi\b/.test(lower) ? 'midi' : undefined;
+  if (!type) {
+    return undefined;
+  }
+
+  const quotedNameMatch = message.match(/(?:call|name|named)\s+(?:it|the track|track)?\s*["']([^"']{1,48})["']/i);
+  if (quotedNameMatch?.[1]) {
+    return { type, name: quotedNameMatch[1].trim() };
+  }
+
+  const looseNameMatch = message.match(/(?:call|name|named)\s+(?:it|the track|track)?\s+([a-z0-9][a-z0-9 _-]{0,47})/i);
+  if (looseNameMatch?.[1]) {
+    return { type, name: looseNameMatch[1].trim().replace(/[.!?,;:]+$/, '') };
+  }
+
+  return { type };
+}
+
+function buildExplicitTrackCreationPlan(message: string, snapshot: ContextSnapshot): ActionPlan | undefined {
+  const request = parseExplicitTrackCreation(message);
+  if (!request) {
+    return undefined;
+  }
+
+  const selected = selectedTrack(snapshot);
+  const trackName = request.name || (request.type === 'audio' ? 'Audio' : 'MIDI');
+  const insertIndex = defaultInsertIndex(snapshot);
+
+  return {
+    id: createId('plan'),
+    title: `Create ${request.type} track`,
+    summary: `Create a new ${request.type} track named ${trackName}.`,
+    rationale: selected
+      ? `${selected.name} is selected. The new track is appended at the end for reliable bridge execution and can be moved manually after creation.`
+      : 'No track is selected, so the new track is appended at the end for reliable bridge execution.',
+    createdAt: new Date().toISOString(),
+    snapshotRevision: snapshot.setRevision,
+    commands: [
+      {
+        type: request.type === 'audio' ? 'create_audio_track' : 'create_midi_track',
+        trackName,
+        insertIndex
+      }
+    ]
+  };
+}
+
 function buildActionPlan(message: string, snapshot: ContextSnapshot, references: ReferenceAnalysis[]): ActionPlan | undefined {
+  const explicitTrackCreationPlan = buildExplicitTrackCreationPlan(message, snapshot);
+  if (explicitTrackCreationPlan) {
+    return explicitTrackCreationPlan;
+  }
+
   const intent = parsePromptIntent(message, snapshot);
   const selected = selectedTrack(snapshot);
 

@@ -12,6 +12,7 @@ export function AbletonConnectPanel({
   onCopyPath
 }: AbletonConnectPanelProps): JSX.Element {
   const connected = state.bridgeStatus === 'connected';
+  const targets = bridgeInfo ? [...bridgeInfo.targets] : [];
 
   return (
     <section className="panel panel-connect">
@@ -37,8 +38,8 @@ export function AbletonConnectPanel({
         <article className="connect-step">
           <span className="start-step">2</span>
           <div>
-            <strong>Drag one device into a MIDI track</strong>
-            <p>Use the `Co-Producer Bridge.amxd` file from the bridge folder below.</p>
+            <strong>Choose a bridge target</strong>
+            <p>Preferred long-term path: control surface. Current Max device remains experimental.</p>
           </div>
         </article>
 
@@ -53,28 +54,22 @@ export function AbletonConnectPanel({
 
       {bridgeInfo ? (
         <div className="bridge-paths">
-          <div className="bridge-path-card">
-            <span>Bridge device</span>
-            <code>{bridgeInfo.bridgeDevicePath}</code>
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => void onCopyPath(bridgeInfo.bridgeDevicePath)}
-            >
-              Copy device path
-            </button>
-          </div>
-          <div className="bridge-path-card">
-            <span>Bridge folder</span>
-            <code>{bridgeInfo.bridgeFolderPath}</code>
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => void onCopyPath(bridgeInfo.bridgeFolderPath)}
-            >
-              Copy folder path
-            </button>
-          </div>
+          {targets.map((target) => (
+            <div key={target.kind} className="bridge-path-card">
+              <span>
+                {target.name} · {target.maturity}
+              </span>
+              <code>{target.entryPath}</code>
+              <code>{target.folderPath}</code>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void onCopyPath(target.entryPath)}
+              >
+                Copy entry path
+              </button>
+            </div>
+          ))}
         </div>
       ) : null}
     </section>

@@ -103,8 +103,29 @@ ipcMain.handle('coproducer:test-model-connection', async () => {
 });
 ipcMain.handle('coproducer:get-bridge-install-info', async (): Promise<BridgeInstallInfo> => {
   const rootPath = process.cwd();
+  const maxForLiveRoot = join(rootPath, 'bridges', 'max-for-live');
+  const controlSurfaceRoot = join(rootPath, 'bridges', 'control-surface');
   return {
-    bridgeFolderPath: join(rootPath, 'bridges', 'max-for-live'),
-    bridgeDevicePath: join(rootPath, 'bridges', 'max-for-live', 'Co-Producer Bridge.amxd')
+    recommendedBridgeKind: 'control_surface',
+    targets: [
+      {
+        kind: 'control_surface',
+        maturity: 'preferred',
+        name: 'Ableton Control Surface Bridge',
+        description: 'Authoritative write bridge scaffold for deterministic Live mutations.',
+        entryPath: join(controlSurfaceRoot, 'README.md'),
+        folderPath: controlSurfaceRoot,
+        installHint: 'Copy the remote-script package into Ableton User Library/Remote Scripts once implemented.'
+      },
+      {
+        kind: 'max_for_live',
+        maturity: 'experimental',
+        name: 'Max for Live Bridge',
+        description: 'Experimental bridge for observation, diagnostics, and future audio taps.',
+        entryPath: join(maxForLiveRoot, 'Co-Producer Bridge.amxd'),
+        folderPath: maxForLiveRoot,
+        installHint: 'Drag Co-Producer Bridge.amxd onto a MIDI track for experimental Max-based connection.'
+      }
+    ]
   };
 });

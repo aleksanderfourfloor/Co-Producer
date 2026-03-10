@@ -1,6 +1,6 @@
 # Co-Producer
 
-Co-Producer is a macOS-first Ableton Live companion app. It gives project-aware music production guidance, proposes grouped Ableton actions, and can apply native Live edits through a Max for Live bridge after approval.
+Co-Producer is a macOS-first Ableton Live companion app. It gives project-aware music production guidance, proposes grouped Ableton actions, and is in the middle of a bridge migration from an experimental Max for Live write path to a control-surface-based Ableton integration.
 
 ## Before you start
 
@@ -56,7 +56,7 @@ If that succeeds, Co-Producer can use:
 
 ### 3. Ableton Live + Max for Live
 
-You need a working Ableton Live 12.3+ install with Max for Live available. The bridge device will not work without Max for Live.
+You need a working Ableton Live 12.3+ install. The current Max bridge remains experimental. The planned authoritative write bridge is the control-surface / remote-script path described in [docs/control-surface-architecture.md](/Users/aleksander/Documents/Development/co-producer/docs/control-surface-architecture.md).
 
 ## Project setup
 
@@ -113,8 +113,8 @@ If `Test AI` fails:
 1. Keep Co-Producer running
 2. Open Ableton Live
 3. Create or select a MIDI track
-4. Drag [Co-Producer Bridge.amxd](/Users/aleksander/Documents/Development/co-producer/bridges/max-for-live/Co-Producer%20Bridge.amxd) onto that MIDI track
-5. Wait for the app status to switch from `Mock session` to `Ableton live`
+4. If you are testing the experimental Max bridge, drag [Co-Producer Bridge.amxd](/Users/aleksander/Documents/Development/co-producer/bridges/max-for-live/Co-Producer%20Bridge.amxd) onto that MIDI track
+5. Wait for the app status to switch from `Mock session` to an Ableton bridge state
 
 Bridge details are documented in [bridges/max-for-live/README.md](/Users/aleksander/Documents/Development/co-producer/bridges/max-for-live/README.md).
 
@@ -125,7 +125,8 @@ Bridge details are documented in [bridges/max-for-live/README.md](/Users/aleksan
 - grouped action plans
 - revision-safe apply flow
 - mock execution when Ableton is not connected
-- Max for Live bridge device artifact
+- experimental Max for Live bridge device artifact
+- control-surface bridge scaffold
 - local-model integration through Ollama's OpenAI-compatible API
 
 ## What does not fully work yet
@@ -153,7 +154,7 @@ You should get stronger responses and more flexible plans once Ollama is connect
 
 ### With Ableton connected
 
-Once the bridge is connected, applying a plan should target the live set instead of the mock session.
+Once an authoritative bridge is connected, applying a plan should target the live set instead of the mock session. Today, the Max bridge should be treated as experimental.
 
 ## Project layout
 

@@ -5,14 +5,18 @@ import type {
   ApplyPlanResult,
   AbletonCommand,
   AudioFeatureSummary,
+  BridgeCapability,
+  BridgeKind,
   ContextSnapshot
 } from './types';
 
 export interface BridgeHelloMessage {
   type: 'bridge:hello';
   bridgeId: string;
+  bridgeKind?: Exclude<BridgeKind, 'mock'>;
   version: string;
-  capabilities: string[];
+  capabilities: BridgeCapability[];
+  authoritativeWrite?: boolean;
 }
 
 export interface BridgeSnapshotUpdateMessage {

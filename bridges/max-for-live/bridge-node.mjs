@@ -39,8 +39,10 @@ function connect() {
       JSON.stringify({
         type: 'bridge:hello',
         bridgeId: 'max-for-live',
+        bridgeKind: 'max_for_live',
         version: '0.1.0',
-        capabilities: ['snapshot', 'analysis', 'commands']
+        capabilities: ['snapshot', 'analysis', 'commands'],
+        authoritativeWrite: false
       })
     );
     log('Connected to desktop bridge.');

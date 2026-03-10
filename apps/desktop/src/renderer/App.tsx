@@ -6,6 +6,7 @@ import type {
   AiSettings,
   ApplyPlanResult,
   BridgeInstallInfo,
+  BridgeInstallTarget,
   CoproducerState,
   TrackSummary
 } from '@shared/types';
@@ -44,20 +45,22 @@ function getActiveSectionLabel(state: CoproducerState): string {
 }
 
 function getBridgeLabel(state: CoproducerState): string {
+  const connectedLabel = state.bridgeKind === 'control_surface' ? 'Ableton control surface' : 'Ableton Max bridge';
+
   if (state.bridgeStatus === 'connected') {
-    return 'Ableton live';
+    return connectedLabel;
   }
 
   if (state.bridgeStatus === 'syncing') {
-    return 'Syncing Ableton snapshot';
+    return `Syncing ${connectedLabel}`;
   }
 
   if (state.bridgeStatus === 'executing') {
-    return 'Executing in Ableton';
+    return `Executing via ${connectedLabel}`;
   }
 
   if (state.bridgeStatus === 'error') {
-    return 'Ableton bridge error';
+    return `${connectedLabel} error`;
   }
 
   if (state.bridgeStatus === 'mock') {
@@ -67,8 +70,58 @@ function getBridgeLabel(state: CoproducerState): string {
   return 'Waiting for bridge';
 }
 
+function getBridgeMaturityLabel(state: CoproducerState): string {
+  switch (state.bridgeMaturity) {
+    case 'stable':
+      return 'Stable';
+    case 'preferred':
+      return 'Preferred';
+    case 'experimental':
+      return 'Experimental';
+    case 'planned':
+      return 'Planned';
+  }
+}
+
+function bridgeTargetSortValue(target: BridgeInstallTarget): number {
+  switch (target.maturity) {
+    case 'preferred':
+      return 0;
+    case 'stable':
+      return 1;
+    case 'experimental':
+      return 2;
+    case 'planned':
+      return 3;
+  }
+}
+
 function isBridgeLive(state: CoproducerState): boolean {
   return ['syncing', 'connected', 'executing'].includes(state.bridgeStatus);
+}
+
+function hasAuthoritativeWriteBridge(state: CoproducerState): boolean {
+  return (
+    isBridgeLive(state) &&
+    state.bridgeAuthoritative &&
+    state.bridgeCapabilities.includes('authoritative_write')
+  );
+}
+
+function hasLiveApplyCapability(state: CoproducerState): boolean {
+  return hasAuthoritativeWriteBridge(state);
+}
+
+function getApplyDisabledReason(state: CoproducerState): string | undefined {
+  if (!isBridgeLive(state)) {
+    return 'Ableton is disconnected. Reconnect the bridge and run self-test before applying this plan.';
+  }
+
+  if (isBridgeLive(state) && !hasLiveApplyCapability(state)) {
+    return 'Live apply is disabled on the experimental Max bridge until self-test succeeds. Run bridge self-test, or install the control-surface bridge.';
+  }
+
+  return undefined;
 }
 
 function getExecutionStatusLabel(state: NonNullable<CoproducerState['lastExecution']>): string {
@@ -138,7 +191,7 @@ export function App(): JSX.Element {
           setState(nextState);
           setBootError(null);
           setSettingsDraft(nextState.settings);
-          setSetupOpen(!isBridgeLive(nextState) || nextState.settings.provider === 'heuristic');
+          setSetupOpen(!hasLiveApplyCapability(nextState) || nextState.settings.provider === 'heuristic');
           setPlanOpen(nextState.pendingPlans.length > 0);
         });
       })
@@ -153,6 +206,7 @@ export function App(): JSX.Element {
         setState(nextState);
         setBootError(null);
         setSettingsDraft(nextState.settings);
+        setSetupOpen((current) => current || !hasLiveApplyCapability(nextState) || nextState.settings.provider === 'heuristic');
         if (nextState.pendingPlans.length > 0) {
           setPlanOpen(true);
         }
@@ -216,6 +270,12 @@ export function App(): JSX.Element {
 
   async function handleApplyPlan(plan: ActionPlan): Promise<void> {
     if (!state || !window.coproducer) {
+      return;
+    }
+
+    const disabledReason = getApplyDisabledReason(state);
+    if (disabledReason) {
+      setConnectionMessage(disabledReason);
       return;
     }
 
@@ -365,8 +425,9 @@ export function App(): JSX.Element {
   const hasPendingPlan = state.pendingPlans.length > 0;
   const emptyChat = state.chat.length === 0;
   const demoMode = state.settings.provider === 'heuristic';
-  const needSetup = !isBridgeLive(state) || demoMode;
+  const needSetup = !hasLiveApplyCapability(state) || demoMode;
   const execution = state.activeExecution ?? state.lastExecution;
+  const applyDisabledReason = getApplyDisabledReason(state);
 
   return (
     <main className="app-shell minimal-shell">
@@ -536,7 +597,7 @@ export function App(): JSX.Element {
                   : `Using ${getAiLabel(state.settings)}.`}{' '}
                 {isBridgeLive(state)
                   ? 'Ableton bridge is available for Live actions.'
-                  : 'Ableton is not connected yet, so actions apply to the mock session.'}
+                  : 'Ableton is not connected yet, so Live actions are paused until reconnection.'}
               </p>
               <button className="primary-button" disabled={busy || message.trim().length === 0} type="submit">
                 {busy ? 'Thinking...' : 'Send'}
@@ -644,35 +705,47 @@ export function App(): JSX.Element {
 
               <div className="setup-block">
                 <h3>2. Connect Ableton</h3>
-                <ol className="setup-steps">
-                  <li>Open Ableton Live and create or select any MIDI track.</li>
-                  <li>Drag `Co-Producer Bridge.amxd` onto that track.</li>
-                  <li>Return here and wait for Ableton status to change to live.</li>
-                </ol>
+                <p>
+                  Recommended direction: the control-surface bridge will become the authoritative write path.
+                  The Max for Live bridge remains experimental for now.
+                </p>
+                {isBridgeLive(state) && !hasLiveApplyCapability(state) ? (
+                  <p className="muted">
+                    The current Ableton connection is live for sync and diagnostics. Run bridge self-test successfully
+                    to enable live apply on this experimental bridge, or install the control-surface bridge.
+                  </p>
+                ) : null}
                 {bridgeInfo ? (
                   <div className="path-list">
-                    <div className="path-card">
-                      <span>Bridge device</span>
-                      <code>{bridgeInfo.bridgeDevicePath}</code>
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => void handleCopyPath(bridgeInfo.bridgeDevicePath)}
-                      >
-                        Copy device path
-                      </button>
-                    </div>
-                    <div className="path-card">
-                      <span>Bridge folder</span>
-                      <code>{bridgeInfo.bridgeFolderPath}</code>
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => void handleCopyPath(bridgeInfo.bridgeFolderPath)}
-                      >
-                        Copy folder path
-                      </button>
-                    </div>
+                    {[...bridgeInfo.targets]
+                      .sort((left, right) => bridgeTargetSortValue(left) - bridgeTargetSortValue(right))
+                      .map((target) => (
+                        <div key={target.kind} className="path-card">
+                          <span>
+                            {target.name} · {target.maturity}
+                          </span>
+                          <p>{target.description}</p>
+                          <code>{target.entryPath}</code>
+                          <code>{target.folderPath}</code>
+                          <p>{target.installHint}</p>
+                          <div className="quick-actions">
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() => void handleCopyPath(target.entryPath)}
+                            >
+                              Copy entry path
+                            </button>
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() => void handleCopyPath(target.folderPath)}
+                            >
+                              Copy folder path
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                   </div>
                 ) : null}
               </div>
@@ -681,7 +754,14 @@ export function App(): JSX.Element {
                 <h3>Current state</h3>
                 <p>{connectionMessage ?? 'No recent setup action.'}</p>
                 <p>
-                  AI: {getAiLabel(state.settings)}. Ableton: {getBridgeLabel(state)}.
+                  AI: {getAiLabel(state.settings)}. Ableton: {getBridgeLabel(state)} ({getBridgeMaturityLabel(state)}).
+                </p>
+                <p>
+                  {hasLiveApplyCapability(state)
+                    ? 'Live apply is enabled.'
+                    : isBridgeLive(state)
+                      ? 'Live apply is disabled until self-test succeeds on the current bridge.'
+                      : 'No authoritative Ableton write bridge is connected.'}
                 </p>
               </div>
             </section>
@@ -727,10 +807,11 @@ export function App(): JSX.Element {
                       );
                     })}
                   </div>
+                  {applyDisabledReason ? <p className="muted">{applyDisabledReason}</p> : null}
                   <button
                     className="primary-button plan-apply-button"
                     type="button"
-                    disabled={applyingPlanId === plan.id}
+                    disabled={applyingPlanId === plan.id || Boolean(applyDisabledReason)}
                     onClick={() => void handleApplyPlan(plan)}
                   >
                     {applyingPlanId === plan.id ? 'Applying...' : 'Apply selected steps'}
